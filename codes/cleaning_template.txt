@@ -1,0 +1,315 @@
+*===============================================================================
+* File name: 		CIT_ISO3.do
+* 
+* Description:		This do-file creates the dataset ISO3_withvars.csv. 
+*
+* Input:  					
+*					$data/input/XXX/ISO3_raw.dta 
+
+*
+* Output:
+*					$data/output/XXX/ISO3_withvars.csv
+*===============================================================================
+
+cls
+capture restore
+set more off
+cap log close
+clear all
+
+*****************************************************************************
+**************************** LEGAL ENTITIES *********************************
+*****************************************************************************
+
+/* Load data */
+use "$data/RAW_raw.dta" , clear
+
+******** SELECT AND CREATE VARIABLES ********
+* GROUP 0
+	* Indentification variables
+*rename   year
+rename id tax_ID
+generate country = "ISO3"
+generate entity = "Legal"	
+
+	* Check for duplicates and drop
+duplicates report year tax_ID
+
+
+* GROUP 1: INCOMES
+	* Turnover 
+egen turnover_exempt = rowtotal(XX), missing
+
+egen turnover_taxed = rowtotal(XX), missing
+
+egen turnover = rowtotal(turnover_exempt turnover_taxed), missing
+
+	* Other income 
+egen other_inc_exempt = rowtotal(XX), missing
+
+egen other_inc_taxed = rowtotal(XX), missing
+
+egen other_income = rowtotal(other_inc_exempt other_inc_taxed), missing
+
+	* Exempt income (is already counted in the above)
+gen exempt_income = XX
+
+gen dividend_income = XX
+gen dividend_exempt = XX
+replace dividend_exempt=0 if dividend_exempt==.
+replace dividend_income=0 if dividend_income==.
+
+
+	* Total income (all income)
+gen total_income = XX
+
+	* Taxable income (-exempt income)
+gen taxable_income_built = total_income - cond(missing(exempt_income), 0, exempt_income)
+gen taxable_income = XX
+	
+* GROUP 2: COST ITEMS
+	* Cost of Goods Sold 
+gen cogs = XX
+
+	* Labor Inputs
+egen labor_inp = rowtotal(XX), missing
+
+	* Material Inputs
+egen material_inp = rowtotal(XX), missing
+
+			
+	* Selling, admin and other operating costs
+egen operating_inp = rowtotal(XX), missing
+
+	* Capital Inputs
+gen capital_inp = XX
+	* Financial Inputs
+egen financial_inp = rowtotal(XX), missing 
+		 
+	* Depreciation 
+egen depreciation = rowtotal(XX), missing
+	
+	* Accelerated depreciation 
+egen acc_depreciation = rowtotal(XX), missing
+		
+	* Other Inputs
+egen other_inp = rowtotal(XX), missing 
+
+ 	* Non deductible Inputs
+gen non_deduc_inp = XX
+
+ 	* Total costs: add up all costs & expenditure
+egen tot_cost_built = rowtotal(capital_inp material_inp operating_inp labor_inp financial_inp depreciation other_inp), missing // only for firm 357
+replace tot_cost_built = 0 if tot_cost_built < 0
+gen tot_cost_dataset = XX
+gen tot_cost = tot_cost_dataset
+
+	* Deductible Costs: total costs - non-deductible inputs 
+gen deductible_cost_built = tot_cost_dataset - cond(missing(non_deduc_inp), 0, non_deduc_inp)  
+
+gen deductible_cost = XX
+
+* GROUP 3: PROFITS
+	* Gross profit
+gen gross_profit = XX
+
+	* Net profit
+gen net_profit  = XX
+gen net_profit_built = total_income - tot_cost_dataset
+
+	* Taxable profit
+gen taxable_profit = XX 
+gen taxable_profit_built = taxable_income - cond(missing(deductible_cost), 0, deductible_cost)
+
+* GROUP 4: GROSS & NET TAX BASE
+	* Investment Incentives  (From tax base)
+gen investment_taxbase = XX
+	* Capital allowances  (From tax base)
+gen capital_allowance = XX
+	* Losses (always from tax base)
+gen loss_carryforward = XX
+	* Other Deductions (always from tax base)
+gen other_ded_taxbase = XX
+	* Add up credits & deductions from tax base: 
+egen tot_deduc_taxbase = rowtotal(investment_taxbase capital_allowance other_ded_taxbase), missing 
+
+
+	* Gross tax base (taxable_profit - tot_deduc_taxbase)
+gen gross_tax_base = taxable_profit - tot_deduc_taxbase 
+
+* NET TAX BASE (gross_tax_base - loss_carryforward) 
+
+gen net_tax_base_built = gross_tax_base - loss_carryforward
+gen net_tax_base = XX 
+
+
+* GROUP 5: GROSS & NET TAX LIABILITY
+
+	* Gross tax liability (net tax base*CIT rate) 
+gen gross_tax_liability = XX
+
+
+	* Credits for foreign taxes paid
+gen cred_foreign_tax = XX
+	
+	* Investment credits from tax liability
+egen investment_taxliab = XX
+
+	* Special firms credits from tax liability
+gen special_taxliab = XX
+
+	* International Trade credits 
+gen trade_taxliab = XX
+
+	* Other credit and allowances from tax liability
+gen other_cred_taxliab= XX
+
+	 *Add up credits & deductions from tax liability 
+egen tot_deduc_taxliab = rowtotal(cred_foreign_tax special_taxliab trade_taxliab investment_taxliab other_cred_taxliab), missing
+
+	* Add up credits & deductions that are not necessarily real credits from tax liability 
+egen tot_noelse_taxliab = rowtotal(cred_foreign_tax  other_cred_taxliab), missing
+
+	* Net tax liability (gross_tax_liability - tot_deduc_taxliab)
+gen net_tax_liability_built = gross_tax_liability - cond(missing(tot_deduc_taxliab), 0, tot_deduc_taxliab)
+gen net_tax_liability   = XX
+
+	* Net tax liability without foreign and other credits  
+gen ntl_noelse = net_tax_liability + cond(missing(tot_noelse_taxliab), 0, tot_noelse_taxliab)
+
+* GROUP 6: WITHHOLDING. ADVANCED/PARTIAL PAYMENTS & OTHER CREDITABLE TAX PAYMENTS
+	* Add up partial/advance payments
+egen partial_advanced_pay  = rowtotal(XX), missing					
+gen withholding=XX
+
+	* Other creditable tax payments
+gen other_cred_tax_pay=XX
+
+	* Tax to remit
+gen tax_to_remit = XX
+
+**** Treatment of missings and 0
+foreach var of varlist gross_tax_base net_tax_base gross_tax_liability net_tax_liability tax_to_remit {
+    replace `var' = 0 if missing(`var') & !missing(total_income)
+}
+
+********* Add labels and drop some variables ********
+label variable tax_ID "Tax ID"
+label variable year "Fiscal Year"
+label variable turnover "Turnover"
+label variable total_income "Total income"
+label variable taxable_income "Taxable income"
+label variable tot_cost "Total Costs"
+label variable deductible_cost "Deductible Costs"
+label variable net_profit "Net profit"
+label variable taxable_income "Taxable profit"
+label variable gross_tax_base "Gross Tax Base"
+label variable tot_deduc_taxbase "Total Credits & Deductions - Tax Base"
+label variable net_tax_base "Net Tax Base"
+label variable gross_tax_liability "Gross Tax Liability"
+label variable net_tax_liability "Net Tax Liability"
+label variable tot_deduc_taxliab "Total Credits & Deductions - Tax Liability"
+label variable tax_to_remit "Tax to Remit"
+label variable country "Country"
+
+**********************************************************************
+
+**** ADD sectors 
+gen section = XX
+gen descr_section = ""
+
+replace descr_section = "AGRICULTURE, FORESTRY AND FISHING" if section == "A"
+replace descr_section = "MINING AND QUARRYING" if section == "B"
+replace descr_section = "MANUFACTURING" if section == "C"
+replace descr_section = "ELECTRICITY, GAS, STEAM AND AIR CONDITIONING SUPPLY" if section == "D"
+replace descr_section = "WATER SUPPLY; SEWERAGE, WASTE MANAGEMENT AND REMEDIATION ACTIVITIES" if section == "E"
+replace descr_section = "CONSTRUCTION" if section == "F"
+replace descr_section = "WHOLESALE AND RETAIL TRADE; REPAIR OF MOTOR VEHICLES AND MOTORCYCLES" if section == "G"
+replace descr_section = "TRANSPORTATION AND STORAGE" if section == "H"
+replace descr_section = "ACCOMODATION AND FOOD SERVICE ACTIVITIES" if section == "I"
+replace descr_section = "INFORMATION AND COMMUNICATION" if section == "J"
+replace descr_section = "FINANCIAL AND INSURANCE ACTIVITIES" if section == "K"
+replace descr_section = "REAL ESTATE ACTIVITIES" if section == "L"
+replace descr_section = "PROFESSIONAL, SCIENTIFIC AND TECHNICAL ACTIVITIES" if section == "M"
+replace descr_section = "ADMNINISTRATIVE AND SUPPORT SERVICE ACTIVITIES" if section == "N"
+replace descr_section = "PUBLIC ADMINISTRATION AND DEFENCE; COMPULSORY SOCIAL SECURITY" if section == "O"
+replace descr_section = "EDUCATION" if section == "P"
+replace descr_section = "HUMAN HEALTH AND SOCIAL WORK ACTIVITIES" if section == "Q"
+replace descr_section = "ARTS, ENTERTAINMENT AND RECREATION" if section == "R"
+replace descr_section = "OTHER SERVICE ACTIVITIES" if section == "S"
+replace descr_section = "ACTIVITY OF HOUSEHOLDS AS EMPLOYERS; ACTIVITIES OF HOUSEHOLDS FOR OWN USE" if section == "T"
+replace descr_section = "ACTIVITY OF EXTRATERRITORIAL ORGANISATIONS AND BODIES" if section == "U"
+
+* GROUP 7: FIRM CHARACTERISTICS
+
+gen capital_city = 0
+cap replace capital_city = 1 if XX
+
+gen incorporation_date = date(fXX, "DMY")
+format incorporation_date %td
+
+gen incorporation = year(incorporation_date)
+
+gen firm_age = (year - incorporation) + 1 
+replace firm_age = . if firm_age < 0
+
+gen first_year = 0
+replace first_year = 1 if firm_age <2 & firm_age != .
+
+**
+gen nb_employee = XX
+
+gen total_assets = XXX
+
+* Generate intangible_assets & tangible assets
+egen tangible_assets = rowtotal(XX), missing
+
+egen intangible_assets = rowtotal(XXX), missing
+
+gen total_asset_built = tangible_assets + intangible_assets - depreciacion_deterioro
+
+gen foreign_ownership == 1 if XXX
+
+/* Special regime data */
+gen special_regime == 1 if XXX
+
+
+	* Final adjustments
+sort tax_ID year, stable
+
+	* Model STR:
+	gen STR = XXX	
+
+	
+tempfile CIT
+save `CIT'	
+
+********* Merge Identifiers Orbis-Match **********
+
+* Firm is scope of the GMT
+use "$XXX.dta", clear
+
+keep id year group guo_country_iso_code	n_total
+rename id tax_ID
+drop if year == .
+duplicates drop tax_ID year, force
+
+tempfile orbis
+save `orbis'
+
+use `CIT', clear
+merge 1:1 tax_ID year using `orbis'
+
+
+gen orbis_match = 0
+replace orbis_match = 1 if _merge == 3
+replace foreign_ownership = 1 if orbis_match == 1
+
+**************************************************
+
+/* SEZ variable */
+gen sez=(special_regime!=3)
+
+* Save data 
+sort tax_ID year, stable
+export delimited using "$XXX/ISO3_withvars.csv", replace 
